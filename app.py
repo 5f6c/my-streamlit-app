@@ -48,6 +48,12 @@ st.set_page_config(
 st.title("김대리님, 안녕하세요?")
 st.write("오늘은 무엇을 도와드릴까요?")
 
+# 이전 대화 기록 출력
+for message in st.session_state.messages:
+
+    with st.chat_message(message["role"]):
+        st.write(message["content"])
+
 
 # 역할 지정
 sys_role = """
@@ -160,20 +166,6 @@ if submit:
         st.warning("음성을 녹음해주세요.")
         st.stop()
 
-    # 시스템 메시지 생성
-    system_content = sys_role
-
-    if text:
-        system_content += f"\n\n다음 내용을 참고하세요:\n{text}"
-
-    # input_messages 생성
-    input_messages = [
-        {
-            "role": "system",
-            "content": system_content
-        }
-    ]
-
     # STT: 음성 → 텍스트
     transcript = client.audio.transcriptions.create(
         model="whisper-1",
@@ -184,14 +176,27 @@ if submit:
         )
     )
 
-    # 사용자 메시지 추가
-    input_messages.append({
+    # 사용자 질문 저장
+    user_question = transcript.text
+
+    st.session_state.messages.append({
         "role": "user",
-        "content": transcript.text
+        "content": user_question
     })
 
-    st.subheader("🎤 인식된 음성")
-    st.write(transcript.text)
+    # 시스템 메시지 생성
+    system_content = sys_role
+
+    if text:
+        system_content += f"\n\n다음 내용을 참고하세요:\n{text}"
+
+    # 이전 대화 + 현재 질문 전달
+    input_messages = [
+        {
+            "role": "system",
+            "content": system_content
+        }
+    ] + st.session_state.messages
 
     # LLM 호출
     with st.spinner("답변을 준비하고 있습니다..."):
@@ -202,7 +207,7 @@ if submit:
             tools=tools
         )
 
-        # 함수 호출 확인
+        # Function Calling 확인
         tool_calls = [
             item for item in response.output
             if item.type == "function_call"
@@ -217,14 +222,25 @@ if submit:
                     email_data = json.loads(tool_call.arguments)
 
                     st.session_state.email_draft = email_data
-                    st.session_state.last_answer = None
+
+            # 이메일 초안 작성 결과도 대화 기록에 저장
+            answer = "요청하신 이메일 초안을 작성했습니다. 내용을 확인한 후 발송해주세요."
 
         else:
 
-            st.session_state.last_answer = response.output_text
-            st.session_state.email_draft = None
+            # 일반 AI 답변
+            answer = response.output_text
 
+        # AI 응답 저장
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": answer
+        })
 
+        st.session_state.last_answer = answer
+
+    # 화면 갱신
+    st.rerun()
 
 # AI 답변 출력
 if st.session_state.last_answer:
