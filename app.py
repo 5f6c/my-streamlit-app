@@ -208,24 +208,23 @@ if submit:
 
         if tool_calls:
 
-            for tool_call in tool_calls:
+    for tool_call in tool_calls:
 
-                if tool_call.name == "send_email":
+        st.write("함수 호출 확인:", tool_call.name)
+        st.write("함수 인자:", tool_call.arguments)
 
-                    # 함수 호출 인자 추출
-                    email_data = json.loads(tool_call.arguments)
+        if tool_call.name == "send_email":
 
-                    # 이메일 초안 저장
-                    st.session_state.email_draft = email_data
+            email_data = json.loads(tool_call.arguments)
 
-                    st.session_state.last_answer = None
+            st.session_state.email_draft = email_data
 
-        else:
+            st.session_state.last_answer = None
 
-            # 일반 AI 답변
-            st.session_state.last_answer = response.output_text
+else:
 
-            st.session_state.email_draft = None
+    st.session_state.last_answer = response.output_text
+    st.session_state.email_draft = None
 
 
 # AI 답변 출력
