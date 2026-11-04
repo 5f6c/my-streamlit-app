@@ -145,6 +145,7 @@ with st.form("task_form"):
     submit = st.form_submit_button("실행")
 
 
+
 # 버튼을 눌렀을 때만 실행
 if submit:
 
@@ -159,12 +160,13 @@ if submit:
         st.warning("음성을 녹음해주세요.")
         st.stop()
 
-    # 시스템 메시지
+    # 시스템 메시지 생성
     system_content = sys_role
 
     if text:
         system_content += f"\n\n다음 내용을 참고하세요:\n{text}"
 
+    # input_messages 생성
     input_messages = [
         {
             "role": "system",
@@ -182,7 +184,7 @@ if submit:
         )
     )
 
-    # 사용자 메시지
+    # 사용자 메시지 추가
     input_messages.append({
         "role": "user",
         "content": transcript.text
@@ -192,37 +194,36 @@ if submit:
     st.write(transcript.text)
 
     # LLM 호출
-with st.spinner("답변을 준비하고 있습니다..."):
+    with st.spinner("답변을 준비하고 있습니다..."):
 
-    response = client.responses.create(
-        model="gpt-4o-mini",
-        input=input_messages,
-        tools=tools
-    )
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            input=input_messages,
+            tools=tools
+        )
 
-    # 함수 호출 확인
-    tool_calls = [
-        item for item in response.output
-        if item.type == "function_call"
-    ]
+        # 함수 호출 확인
+        tool_calls = [
+            item for item in response.output
+            if item.type == "function_call"
+        ]
 
-    if tool_calls:
+        if tool_calls:
 
-        for tool_call in tool_calls:
+            for tool_call in tool_calls:
 
-            if tool_call.name == "send_email":
+                if tool_call.name == "send_email":
 
-                email_data = json.loads(tool_call.arguments)
+                    email_data = json.loads(tool_call.arguments)
 
-                st.session_state.email_draft = email_data
-                st.session_state.last_answer = None
+                    st.session_state.email_draft = email_data
+                    st.session_state.last_answer = None
 
-    else:
+        else:
 
-        # 일반 답변 저장
-        st.session_state.last_answer = response.output_text
+            st.session_state.last_answer = response.output_text
+            st.session_state.email_draft = None
 
-        st.session_state.email_draft = None
 
 
 # AI 답변 출력
