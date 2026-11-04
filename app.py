@@ -58,12 +58,7 @@ if "email_draft" not in st.session_state:
 
 if "last_answer" not in st.session_state:
     st.session_state.last_answer = None
-    
-# 이전 대화 기록 출력
-for message in st.session_state.messages:
 
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
 
 
 # 역할 지정
@@ -298,3 +293,9 @@ if st.session_state.email_draft is not None:
 
             except Exception as e:
                 st.error(f"이메일 발송 실패: {e}")
+
+# 이전 대화 기록 출력
+for message in st.session_state.messages:
+
+    with st.chat_message(message["role"]):
+        st.write(message["content"])
