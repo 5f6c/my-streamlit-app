@@ -192,38 +192,37 @@ if submit:
     st.write(transcript.text)
 
     # LLM 호출
-    with st.spinner("답변을 준비하고 있습니다..."):
+with st.spinner("답변을 준비하고 있습니다..."):
 
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            input=input_messages,
-            tools=tools
-        )
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=input_messages,
+        tools=tools
+    )
 
-        # Function Calling 확인
-        tool_calls = [
-            item for item in response.output
-            if item.type == "function_call"
-        ]
+    # 함수 호출 확인
+    tool_calls = [
+        item for item in response.output
+        if item.type == "function_call"
+    ]
 
-        if tool_calls:
-          
-          for tool_call in tool_calls:
-            
-            st.write("함수 호출 확인:", tool_call.name)
-            st.write("함수 인자:", tool_call.arguments)
-            
+    if tool_calls:
+
+        for tool_call in tool_calls:
+
             if tool_call.name == "send_email":
-              email_data = json.loads(tool_call.arguments)
-              
-              st.session_state.email_draft = email_data
-              
-              st.session_state.last_answer = None
 
-else:
+                email_data = json.loads(tool_call.arguments)
 
-    st.session_state.last_answer = response.output_text
-    st.session_state.email_draft = None
+                st.session_state.email_draft = email_data
+                st.session_state.last_answer = None
+
+    else:
+
+        # 일반 답변 저장
+        st.session_state.last_answer = response.output_text
+
+        st.session_state.email_draft = None
 
 
 # AI 답변 출력
