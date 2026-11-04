@@ -246,7 +246,7 @@ if submit:
         try:
             speech_response = client.audio.speech.create(
                 model="gpt-4o-mini-tts",
-                voice="coral",
+                voice="oxyn",
                 input=answer,
                 instructions="한국어로 자연스럽고 친절하게, 또렷한 발음으로 말해주세요."
             )
