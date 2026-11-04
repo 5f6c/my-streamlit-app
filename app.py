@@ -48,6 +48,17 @@ st.set_page_config(
 st.title("김대리님, 안녕하세요?")
 st.write("오늘은 무엇을 도와드릴까요?")
 
+
+# 상태 초기화
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "email_draft" not in st.session_state:
+    st.session_state.email_draft = None
+
+if "last_answer" not in st.session_state:
+    st.session_state.last_answer = None
+    
 # 이전 대화 기록 출력
 for message in st.session_state.messages:
 
@@ -127,15 +138,6 @@ tools = [
 ]
 
 
-# 상태 초기화
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "email_draft" not in st.session_state:
-    st.session_state.email_draft = None
-
-if "last_answer" not in st.session_state:
-    st.session_state.last_answer = None
 
 
 # 지시 영역
