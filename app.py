@@ -244,19 +244,19 @@ if submit:
 
         # TTS: AI 답변 → 음성 변환
         try:
-          speech_response = client.audio.speech.create(
-              model="gpt-4o-mini-tts",
-              voice="oxyn",
-              input=answer,
-              instructions="한국어로 자연스럽고 친절하게, 또렷한 발음으로 말해주세요."
-              )
+            speech_response = client.audio.speech.create(
+                model="gpt-4o-mini-tts",
+                voice="coral",
+                input=answer,
+                instructions="한국어로 자연스럽고 친절하게, 또렷한 발음으로 말해주세요."
+            )
 
-    # 음성 데이터 저장
-    st.session_state.last_audio = speech_response.content
-    
-    except Exception as e:
-    st.session_state.last_audio = None
-    st.warning(f"음성 변환 실패: {e}")
+            # 음성 데이터 저장
+            st.session_state.last_audio = speech_response.content
+
+        except Exception as e:
+            st.session_state.last_audio = None
+            st.warning(f"음성 변환 실패: {e}")
 
         # AI 응답 저장
         st.session_state.messages.append({
