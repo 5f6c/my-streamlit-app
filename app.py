@@ -207,19 +207,18 @@ if submit:
         ]
 
         if tool_calls:
-
-    for tool_call in tool_calls:
-
-        st.write("함수 호출 확인:", tool_call.name)
-        st.write("함수 인자:", tool_call.arguments)
-
-        if tool_call.name == "send_email":
-
-            email_data = json.loads(tool_call.arguments)
-
-            st.session_state.email_draft = email_data
-
-            st.session_state.last_answer = None
+          
+          for tool_call in tool_calls:
+            
+            st.write("함수 호출 확인:", tool_call.name)
+            st.write("함수 인자:", tool_call.arguments)
+            
+            if tool_call.name == "send_email":
+              email_data = json.loads(tool_call.arguments)
+              
+              st.session_state.email_draft = email_data
+              
+              st.session_state.last_answer = None
 
 else:
 
