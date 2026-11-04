@@ -55,6 +55,7 @@ if st.button("🗑️ 대화 초기화"):
     st.session_state.messages = []
     st.session_state.email_draft = None
     st.session_state.last_answer = None
+    st.session_state.last_audio = None
 
     st.rerun()
 
@@ -68,6 +69,9 @@ if "email_draft" not in st.session_state:
 
 if "last_answer" not in st.session_state:
     st.session_state.last_answer = None
+  
+if "last_audio" not in st.session_state:
+    st.session_state.last_audio = None
 
 
 
@@ -238,6 +242,22 @@ if submit:
             # 일반 AI 답변
             answer = response.output_text
 
+        # TTS: AI 답변 → 음성 변환
+        try:
+          speech_response = client.audio.speech.create(
+              model="gpt-4o-mini-tts",
+              voice="oxyn",
+              input=answer,
+              instructions="한국어로 자연스럽고 친절하게, 또렷한 발음으로 말해주세요."
+              )
+
+    # 음성 데이터 저장
+    st.session_state.last_audio = speech_response.content
+    
+    except Exception as e:
+    st.session_state.last_audio = None
+    st.warning(f"음성 변환 실패: {e}")
+
         # AI 응답 저장
         st.session_state.messages.append({
             "role": "assistant",
@@ -249,11 +269,20 @@ if submit:
     # 화면 갱신
     st.rerun()
 
-# AI 답변 출력
+# AI 답변 및 음성 출력
 if st.session_state.last_answer:
 
     st.subheader("🤖 AI 답변")
     st.write(st.session_state.last_answer)
+
+    # 음성 자동 재생
+    if st.session_state.last_audio:
+
+        st.audio(
+            st.session_state.last_audio,
+            format="audio/mp3",
+            autoplay=True
+        )
 
 
 # 이메일 발송 확인 화면
