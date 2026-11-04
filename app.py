@@ -49,6 +49,16 @@ st.title("김대리님, 안녕하세요?")
 st.write("오늘은 무엇을 도와드릴까요?")
 
 
+# 대화 초기화 버튼
+if st.button("🗑️ 대화 초기화"):
+
+    st.session_state.messages = []
+    st.session_state.email_draft = None
+    st.session_state.last_answer = None
+
+    st.rerun()
+
+
 # 상태 초기화
 if "messages" not in st.session_state:
     st.session_state.messages = []
