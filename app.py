@@ -1,340 +1,144 @@
 
 import os
+import uuid
 import base64
-import json
-import requests
-import smtplib
+from typing import Literal
 
 import streamlit as st
-from email.mime.text import MIMEText
-from openai import OpenAI
+from pydantic import BaseModel, Field
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.chat_history import InMemoryChatMessageHistory
 
+# 상담 티켓 JSON 구조
+class SupportTicket(BaseModel):
+    product_model: str | None = Field(default=None, description="문의 대상 제품 모델명 (대화에 없으면 null)")
+    category: Literal["제품 오류", "필터/소모품", "앱 연결", "사용 방법", "기타"] = Field(description="문의 유형")
+    core_issue: str = Field(description="고객 문의의 핵심 내용을 한 문장으로 요약")
+    sentiment: Literal["긍정", "중립", "부정"] = Field(description="상담 중 고객의 전반적인 감정")
+    urgency: int = Field(description="처리 긴급도 (1~5점, 5점이 가장 긴급)", ge=1, le=5)
+    resolved: bool = Field(description="상담 중 매뉴얼 안내만으로 문제가 해결되었는지 여부")
+    needs_agent: bool = Field(description="상담원의 후속 연락이나 조치가 필요한지 여부")
+    next_action: str = Field(description="상담원이 이어서 해야 할 조치 (필요 없으면 '없음')")
 
-# OpenAI 클라이언트 생성
-client = OpenAI()
+# 매뉴얼 읽기 (앱 시작 시 한 번만 실행)
+@st.cache_resource
+def load_manual():
+    with open("manual.txt", "r", encoding="utf-8") as f:
+        return f.read()
 
+# 체인 생성 (앱 시작 시 한 번만 실행)
+@st.cache_resource
+def create_chains():
+    # 상담 체인
+    s_msg = """당신은 클린웨이브 고객센터의 상담원입니다.
+아래 [제품 매뉴얼]에 있는 내용만 근거로 답변하세요.
 
-# 이메일 발송 함수
-def send_email(to, subject, body):
+[답변 규칙]
+1. 친절하고 간결하게 3~5문장 이내로 답변합니다.
+2. 조치 방법에 순서가 있으면 번호를 붙여 안내합니다.
+3. 질문 내용이 매뉴얼에 없을 때만(수리비, 환불, 배송, 타사 제품 비교 등) 추측하지 말고 "담당 부서 확인 후 안내드리겠습니다."라고 답합니다.
+   - 매뉴얼로 답할 수 있는 질문에는 이 문장을 붙이지 않습니다.
+   - 한 질문에 두 가지가 섞여 있으면 매뉴얼에 있는 부분은 답하고, 없는 부분에 대해서만 이 문장을 씁니다.
+4. 고객이 불편을 표현하면 먼저 공감하는 말을 한 문장 덧붙입니다.
 
-    sender = os.getenv("GMAIL_ADDRESS")
-    password = os.getenv("GMAIL_APP_PASSWORD")
+[제품 매뉴얼]
+{manual}"""
+    messages = [("system", s_msg), MessagesPlaceholder("history"), ("human", "{question}")]
+    chat_chain = ChatPromptTemplate.from_messages(messages) | ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
 
-    if not sender or not password:
-        raise ValueError("Gmail 환경변수를 확인해주세요.")
+    # 이미지 판독 체인
+    s_msg = "당신은 가전제품 사진과 앱 화면을 판독하는 전문가입니다. 이미지에 보이는 사실만 객관적으로 기술하세요."
+    h_msg = [
+        {"type": "text", "text": "이미지에서 확인되는 제품 모델명, 화면에 표시된 코드나 문구, 켜져 있는 표시등과 그 색상을 항목별로 정리하세요. 원인 추측이나 해결 방법은 쓰지 마세요."},
+        {"type": "image_url", "image_url": {"url": "{image_url}"}},
+    ]
+    image_chain = ChatPromptTemplate.from_messages([("system", s_msg), ("human", h_msg)]) | ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-    # 메일 구성 (본문, 제목, 발신자, 수신자)
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = sender
-    msg["To"] = to
+    # 티켓 생성 체인
+    s_msg = "당신은 고객 상담 내용을 분석해 상담 티켓을 작성하는 CS 품질 관리 전문가입니다."
+    h_msg = "다음 상담 대화를 분석해 상담 티켓을 작성하세요.\n\n{conversation}"
+    ticket_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
+    ticket_chain = ChatPromptTemplate.from_messages([("system", s_msg), ("human", h_msg)]) | ticket_llm.with_structured_output(SupportTicket)
 
-    # 이메일 발송
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(sender, password)
-        server.send_message(msg)
-
-    return "이메일 발송 완료"
-
+    return chat_chain, image_chain, ticket_chain
 
 # 페이지 설정
-st.set_page_config(
-    page_title="에이블",
-    page_icon="🤖",
-    layout="wide"
+st.set_page_config(page_title="클린웨이브 고객센터", page_icon="🌀")
+st.title("🌀 클린웨이브 고객센터")
+st.caption("AP-300 공기청정기 상담 챗봇")
+
+manual = load_manual()
+chat_chain, image_chain, ticket_chain = create_chains()
+
+# 세션 상태 초기화
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
+    st.session_state.history = InMemoryChatMessageHistory()
+    st.session_state.last_image_id = None
+    st.session_state.ticket = None
+
+# 대화를 기억하는 체인 (히스토리는 st.session_state에 저장)
+chain = RunnableWithMessageHistory(
+    chat_chain,
+    lambda session_id: st.session_state.history,
+    input_messages_key="question",
+    history_messages_key="history"
 )
 
-st.title("김대리님, 안녕하세요?")
-st.write("오늘은 무엇을 도와드릴까요?")
-
-
-# 대화 초기화 버튼
-if st.button("🗑️ 대화 초기화"):
-
-    st.session_state.messages = []
-    st.session_state.email_draft = None
-    st.session_state.last_answer = None
-    st.session_state.last_audio = None
-
-    st.rerun()
-
-
-# 상태 초기화
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "email_draft" not in st.session_state:
-    st.session_state.email_draft = None
-
-if "last_answer" not in st.session_state:
-    st.session_state.last_answer = None
-  
-if "last_audio" not in st.session_state:
-    st.session_state.last_audio = None
-
-
-
-# 역할 지정
-sys_role = """
-당신은 '김 대리'의 개인 비서 '에이블'입니다.
-김대리가 요청한 업무를 최선을 다해 처리합니다.
-
-[담당 업무]
-
-1. 회의록 분석 및 요약
-   - 회의의 주요 안건과 핵심 논의 내용을 정리합니다.
-   - 주요 결정 사항과 논의 결과를 요약합니다.
-   - 불필요하거나 반복되는 내용은 제외하고 핵심만 전달합니다.
-
-2. 업무 지시 사항 추출
-   - 회의 내용 중 김 대리에게 배정된 업무를 찾아냅니다.
-   - 담당 업무의 구체적인 내용과 수행 목적을 정리합니다.
-   - 업무별 마감 기한과 우선순위를 확인합니다.
-   - 담당자가 불분명하거나 마감 기한이 없는 경우 임의로 추측하지 않습니다.
-
-3. 업무 관리 및 지원
-   - 김 대리가 수행해야 할 업무를 빠짐없이 정리합니다.
-   - 업무 진행에 필요한 후속 조치 사항을 제안합니다.
-   - 업무 수행에 필요한 정보가 부족하면 추가 확인 사항을 안내합니다.
-
-4. 이메일 작성 및 발송
-   - 사용자의 요청에 따라 이메일을 작성합니다.
-   - 수신자, 제목, 본문을 구분하여 작성합니다.
-   - 이메일 발송 요청이 있으면 send_email 함수를 호출합니다.
-   - 수신자 이메일 주소가 없으면 임의로 만들어내지 않습니다.
-   - 수신자, 제목, 본문 중 필요한 정보가 부족하면 추가로 질문합니다.
-   - 이메일 초안은 사용자가 확인할 수 있도록 작성합니다.
-
-[응답 원칙]
-
-1. 핵심 내용을 먼저 제시하고 구체적인 설명을 덧붙입니다.
-2. 회의 내용에 없는 사실을 임의로 만들어내지 않습니다.
-3. 김 대리에게 배정된 업무와 다른 참석자의 업무를 명확히 구분합니다.
-4. 업무가 배정되지 않았다면 배정된 업무가 없다고 명시합니다.
-5. 표와 목록을 활용하여 정보를 체계적으로 정리합니다.
-6. 이메일 발송은 사용자가 최종 확인한 후 진행합니다.
-"""
-
-
-# Function Calling 도구 정의
-tools = [
-    {
-        "type": "function",
-        "name": "send_email",
-        "description": "사용자가 요청한 이메일의 수신자, 제목, 본문을 작성합니다.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "to": {
-                    "type": "string",
-                    "description": "이메일 수신자 주소"
-                },
-                "subject": {
-                    "type": "string",
-                    "description": "이메일 제목"
-                },
-                "body": {
-                    "type": "string",
-                    "description": "이메일 본문"
-                }
-            },
-            "required": ["to", "subject", "body"],
-            "additionalProperties": False
-        },
-        "strict": True
-    }
-]
-
-
-
-
-# 지시 영역
-with st.form("task_form"):
-
-    uploaded_file = st.file_uploader(
-        "텍스트 파일 업로드",
-        type=["txt"]
-    )
-
-    audio_value = st.audio_input("무엇을 도와드릴까요?")
-
-    submit = st.form_submit_button("실행")
-
-
-
-# 버튼을 눌렀을 때만 실행
-if submit:
-
-    # 업로드된 파일이 있으면 디코딩
-    text = ""
-
-    if uploaded_file is not None:
-        text = uploaded_file.read().decode("utf-8")
-
-    # 녹음이 없으면 녹음 요청
-    if audio_value is None:
-        st.warning("음성을 녹음해주세요.")
-        st.stop()
-
-    # STT: 음성 → 텍스트
-    transcript = client.audio.transcriptions.create(
-        model="whisper-1",
-        file=(
-            "audio.wav",
-            audio_value.getvalue(),
-            "audio/wav"
-        )
-    )
-
-    # 사용자 질문 저장
-    user_question = transcript.text
-
-    st.session_state.messages.append({
-        "role": "user",
-        "content": user_question
-    })
-
-    # 시스템 메시지 생성
-    system_content = sys_role
-
-    if text:
-        system_content += f"\n\n다음 내용을 참고하세요:\n{text}"
-
-    # 이전 대화 + 현재 질문 전달
-    input_messages = [
-        {
-            "role": "system",
-            "content": system_content
-        }
-    ] + st.session_state.messages
-
-    # LLM 호출
-    with st.spinner("답변을 준비하고 있습니다..."):
-
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            input=input_messages,
-            tools=tools
-        )
-
-        # Function Calling 확인
-        tool_calls = [
-            item for item in response.output
-            if item.type == "function_call"
-        ]
-
-        if tool_calls:
-
-            for tool_call in tool_calls:
-
-                if tool_call.name == "send_email":
-
-                    email_data = json.loads(tool_call.arguments)
-
-                    st.session_state.email_draft = email_data
-
-            # 이메일 초안 작성 결과도 대화 기록에 저장
-            answer = "요청하신 이메일 초안을 작성했습니다. 내용을 확인한 후 발송해주세요."
-
-        else:
-
-            # 일반 AI 답변
-            answer = response.output_text
-
-        # TTS: AI 답변 → 음성 변환
-        try:
-            speech_response = client.audio.speech.create(
-                model="gpt-4o-mini-tts",
-                voice="onyx",
-                input=answer,
-                instructions="한국어로 자연스럽고 친절하게, 또렷한 발음으로 말해주세요."
-            )
-
-            # 음성 데이터 저장
-            st.session_state.last_audio = speech_response.content
-
-        except Exception as e:
-            st.session_state.last_audio = None
-            st.warning(f"음성 변환 실패: {e}")
-
-        # AI 응답 저장
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": answer
-        })
-
-        st.session_state.last_answer = answer
-
-    # 화면 갱신
-    st.rerun()
-
-# AI 답변 및 음성 출력
-if st.session_state.last_answer:
-
-    st.subheader("🤖 AI 답변")
-    st.write(st.session_state.last_answer)
-
-    # 음성 자동 재생
-    if st.session_state.last_audio:
-
-        st.audio(
-            st.session_state.last_audio,
-            format="audio/mp3",
-            autoplay=True
-        )
-
-
-# 이메일 발송 확인 화면
-if st.session_state.email_draft is not None:
+# 사이드바: 이미지 첨부, 상담 종료
+with st.sidebar:
+    uploaded = st.file_uploader("제품 사진 / 화면 캡처 첨부", type=["png", "jpg", "jpeg"])
+    if uploaded:
+        st.image(uploaded)
 
     st.divider()
+    if st.button("상담 종료 및 티켓 생성", type="primary"):
+        conversation = ""
+        for msg in st.session_state.history.messages:
+            if msg.type == "human":
+                conversation += f"고객: {msg.content}\n"
+            else:
+                conversation += f"상담원: {msg.content}\n"
+        if conversation:
+            with st.spinner("티켓 생성 중..."):
+                st.session_state.ticket = ticket_chain.invoke({"conversation": conversation})
 
-    st.subheader("📧 이메일 발송 확인")
+    if st.session_state.ticket:
+        st.subheader("📋 상담 티켓")
+        st.json(st.session_state.ticket.model_dump())
 
-    email_data = st.session_state.email_draft
+    if st.button("새 상담 시작"):
+        st.session_state.clear()
+        st.rerun()
 
-    # 이메일 정보 입력
-    to = st.text_input(
-        "수신자 이메일",
-        value=email_data["to"],
-        key="email_to"
-    )
+# 기존 대화 출력
+for msg in st.session_state.history.messages:
+    role = "user" if msg.type == "human" else "assistant"
+    with st.chat_message(role):
+        st.markdown(msg.content)
 
-    subject = st.text_input(
-        "이메일 제목",
-        value=email_data["subject"],
-        key="email_subject"
-    )
+# 사용자 입력
+user_input = st.chat_input("문의 내용을 입력하세요...")
 
-    body = st.text_area(
-        "이메일 본문",
-        value=email_data["body"],
-        height=250,
-        key="email_body"
-    )
+if user_input:
+    question = user_input
 
-    # 발송 버튼
-    if st.button("이메일 발송"):
+    # 새로 첨부된 이미지가 있으면 판독 결과를 질문에 붙이기 (같은 이미지는 한 번만 판독)
+    if uploaded and uploaded.file_id != st.session_state.last_image_id:
+        b64 = base64.b64encode(uploaded.getvalue()).decode("utf-8")
+        data_url = f"data:{uploaded.type};base64,{b64}"
+        with st.spinner("이미지 판독 중..."):
+            image_result = image_chain.invoke({"image_url": data_url})
+        question = f"[고객 첨부 이미지 판독 결과]\n{image_result.content}\n\n[고객 질문]\n{user_input}"
+        st.session_state.last_image_id = uploaded.file_id
 
-        if not to or not subject or not body:
-            st.warning("수신자, 제목, 본문을 모두 입력해주세요.")
+    with st.chat_message("user"):
+        st.markdown(question)
 
-        else:
-
-            try:
-                result = send_email(to, subject, body)
-
-                st.success(result)
-
-                # 발송 완료 후 초안 초기화
-                st.session_state.email_draft = None
-
-            except Exception as e:
-                st.error(f"이메일 발송 실패: {e}")
-
-# 이전 대화 기록 출력
-for message in st.session_state.messages:
-
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
+    with st.chat_message("assistant"):
+        with st.spinner("답변 작성 중..."):
+            cfg = {"configurable": {"session_id": st.session_state.session_id}}
+            response = chain.invoke({"manual": manual, "question": question}, config=cfg)
+        st.markdown(response.content)
